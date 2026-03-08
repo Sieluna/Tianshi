@@ -1,0 +1,61 @@
+[workspace]
+members = ["shared", "shaders"]
+resolver = "2"
+
+[workspace.dependencies]
+bytemuck = { version = "1", default-features = false }
+glam = { version = "0.32", default-features = false }
+shaders = { path = "shaders" }
+shared = { path = "shared" }
+spirv-std = { git = "https://github.com/Rust-GPU/rust-gpu.git" }
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Sieluna <seele.peng@gmail.com>"]
+edition = "2024"
+repository = "https://github.com/Sieluna/Tianshi"
+
+[package]
+name = "tianshi"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytemuck = { workspace = true, features = ["derive"] }
+env_logger = "0.11"
+futures = "0.3"
+glam = { workspace = true, features = ["bytemuck"] }
+image = { version = "0.25", default-features = false, features = ["png", "hdr"] }
+log = "0.4"
+pollster = "0.4"
+rand = "0.10"
+shaders.workspace = true
+shared.workspace = true
+thiserror = "2"
+wgpu = { version = "28", features = ["spirv"] }
+winit = "0.30"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+console_log = "1"
+wasm-bindgen-futures = "0.4"
+
+[build-dependencies]
+spirv-builder = { git = "https://github.com/Rust-GPU/rust-gpu.git" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+strip = "debuginfo"
