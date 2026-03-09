@@ -1,13 +1,13 @@
 extern crate alloc;
 
-pub mod app;
-pub mod data;
+mod app;
+mod data;
 mod render;
 
+pub use app::App;
 pub use data::{BoundingBox, PointCloud, TransformedPointCloud};
+pub use render::Graphics;
 use winit::event_loop::EventLoop;
-
-pub use crate::{app::App, render::Graphics};
 
 #[cfg(target_arch = "wasm32")]
 pub fn run_app(event_loop: EventLoop<Graphics>, app: App) {

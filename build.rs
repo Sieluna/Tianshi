@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use spirv_builder::SpirvBuilder;
 
@@ -8,7 +8,6 @@ fn build_shader(path_to_crate: &str) {
     let mut builder = SpirvBuilder::new(path_to_crate, "spirv-unknown-vulkan1.1");
     builder.build_script.defaults = true;
     builder.build_script.env_shader_spv_path = Some(true);
-    builder.target_dir_path = Some(PathBuf::from("wgpu-builder"));
     builder.build().expect("Kernel failed to compile");
 }
 

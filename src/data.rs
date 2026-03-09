@@ -2,7 +2,7 @@ use std::io::{self, Read};
 use std::path::Path;
 
 use glam::Vec3;
-use rand::RngExt;
+use rand::Rng;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BoundingBox {
@@ -196,7 +196,7 @@ mod tests {
         let cloud = PointCloud {
             points: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
         };
-        let buffer = cloud.to_bytes().unwrap();
+        let buffer = cloud.to_bytes();
         assert_eq!(buffer.len(), 24); // 6 * 4 bytes
 
         let restored = PointCloud::from_bytes(&buffer).unwrap();

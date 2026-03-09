@@ -95,17 +95,11 @@ fn create_pipeline(
     swap_chain_format: TextureFormat,
 ) -> (RenderPipeline, BindGroupLayout) {
     // Load SPIR-V shaders
-    // let shader_bytes: &[u8] = include_bytes!(env!("shaders.spv"));
-    // let shader_words: &[u32] = bytemuck::cast_slice(shader_bytes);
-    // let shader = device.create_shader_module(ShaderModuleDescriptor {
-    //     label: Some("Point Cloud Shader"),
-    //     source: ShaderSource::SpirV(Cow::Borrowed(shader_words)),
-    // });
-    // Load WGSL shaders
-    let shader_source = include_str!("render.wgsl");
+    let data: &[u8] = include_bytes!(env!("shaders.spv"));
+    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(&data).into_owned());
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("Point Cloud Shader"),
-        source: ShaderSource::Wgsl(Cow::Borrowed(shader_source)),
+        source: ShaderSource::SpirV(spirv),
     });
 
     // Create bind group layout for point cloud uniforms

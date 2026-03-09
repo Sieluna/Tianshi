@@ -28,8 +28,7 @@ pub fn point_cloud_vs(
     let mut scan_line_y = uniforms.scan_line_y1;
     if (layer - 2.0).abs() < 0.1 {
         scan_line_y = uniforms.scan_line_y2;
-    }
-    if (layer - 3.0).abs() < 0.1 {
+    } else if (layer - 3.0).abs() < 0.1 {
         scan_line_y = uniforms.scan_line_y3;
     }
     let adjusted_scan_line_y = scan_line_y - delay;
@@ -79,51 +78,33 @@ pub fn point_cloud_vs(
     let layer_weight = -0.25 * layer + 1.25;
     let final_alpha = 0.6 * alpha * dist_alpha * layer_weight * point_active;
 
-    // Glitch effects (4 bands, manually unrolled)
+    // Glitch effects (4 bands)
     let mut glitched = mv_pos;
-    {
-        let g = uniforms.glitch_effects_0;
-        let sy = glitched.y;
-        if (sy - g.x).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.y;
+    let glitches = [
+        uniforms.glitch_effects_0,
+        uniforms.glitch_effects_1,
+        uniforms.glitch_effects_2,
+        uniforms.glitch_effects_3
+    ];
+    for i in 0..4 {
+        let glitch = glitches[i];
+        let gy0 = glitch.x;
+        let gx0 = glitch.y;
+        let gy1 = glitch.z;
+        let gx1 = glitch.w;
+
+        let screen_y = glitched.y;
+        if (screen_y - gy0).abs() < uniforms.glitch_y_range {
+            glitched.x += uniforms.glitch_x_offset * gx0;
         }
-        if (sy - g.z).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.w;
-        }
-    }
-    {
-        let g = uniforms.glitch_effects_1;
-        let sy = glitched.y;
-        if (sy - g.x).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.y;
-        }
-        if (sy - g.z).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.w;
-        }
-    }
-    {
-        let g = uniforms.glitch_effects_2;
-        let sy = glitched.y;
-        if (sy - g.x).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.y;
-        }
-        if (sy - g.z).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.w;
-        }
-    }
-    {
-        let g = uniforms.glitch_effects_3;
-        let sy = glitched.y;
-        if (sy - g.x).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.y;
-        }
-        if (sy - g.z).abs() < uniforms.glitch_y_range {
-            glitched.x += uniforms.glitch_x_offset * g.w;
+        if (screen_y - gy1).abs() < uniforms.glitch_y_range {
+            glitched.x += uniforms.glitch_x_offset * gx1;
         }
     }
 
     // Projection + billboard
     let proj = uniforms.projection * glitched;
+    let screen_pos = vec2(proj.x / proj.w, proj.y / proj.w);
     let screen_uv = vec2((proj.x / proj.w + 1.0) * 0.5, (proj.y / proj.w + 1.0) * 0.5);
     let ps = (size * uniforms.point_size_scale * dist_alpha + 0.5) / uniforms.resolution_y;
 
@@ -136,7 +117,6 @@ pub fn point_cloud_vs(
         _ => (vec2(ps, ps), vec2(1.0, 1.0)),
     };
 
-    let screen_pos = vec2(proj.x / proj.w, proj.y / proj.w);
     let final_xy = screen_pos + offset;
 
     *out_pos = vec4(final_xy.x, final_xy.y, proj.z / proj.w, 1.0);

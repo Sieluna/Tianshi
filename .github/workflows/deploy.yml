@@ -1,0 +1,60 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse rust-toolchain.toml
+        id: toolchain
+        run: |
+          TOOLCHAIN=$(grep "^channel" rust-toolchain.toml | sed 's/channel = "//;s/"$//')
+          COMPONENTS=$(grep "^components" rust-toolchain.toml | sed 's/components = \[//;s/\]$//' | tr -d ' "' | tr ',' ' ')
+          echo "version=$TOOLCHAIN" >> $GITHUB_OUTPUT
+          echo "components=$COMPONENTS" >> $GITHUB_OUTPUT
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: ${{ steps.toolchain.outputs.components }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install trunk
+        run: |
+          curl -Lf https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar xz -C /tmp
+          sudo install -m 0755 /tmp/trunk /usr/local/bin/
+
+      - name: Build Page
+        run: trunk build --release --cargo-profile wasm-release --public-url /Tianshi/
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
