@@ -1,4 +1,5 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::vec::Vec;
 
 use shared::PointCloudUniforms;
 use wgpu::util::DeviceExt;
@@ -14,10 +15,10 @@ use wgpu::{
 use winit::{dpi::PhysicalSize, event_loop::EventLoopProxy, window::Window};
 
 #[cfg(target_arch = "wasm32")]
-pub type Rc<T> = std::rc::Rc<T>;
+pub type Rc<T> = alloc::rc::Rc<T>;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub type Rc<T> = std::sync::Arc<T>;
+pub type Rc<T> = alloc::sync::Arc<T>;
 
 pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>) {
     let instance = Instance::default();
@@ -29,19 +30,19 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
             compatible_surface: Some(&surface),
         })
         .await
-        .expect("Could not get an adapter (GPU).");
+        .expect("Failed at adapter creation.");
 
     let (device, queue) = adapter
         .request_device(&DeviceDescriptor {
             label: None,
             required_features: Features::empty(),
             required_limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+            experimental_features: Default::default(),
             memory_hints: MemoryHints::Performance,
             trace: Default::default(),
-            experimental_features: Default::default(),
         })
         .await
-        .expect("Failed to get device");
+        .expect("Failed to get device.");
 
     let size = window.inner_size();
     let width = size.width.max(1);
@@ -56,7 +57,7 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
     // Create uniform buffer for point cloud
     let point_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Point Cloud Uniform Buffer"),
-        size: std::mem::size_of::<PointCloudUniforms>() as u64,
+        size: core::mem::size_of::<PointCloudUniforms>() as u64,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -95,7 +96,7 @@ fn create_pipeline(
     swap_chain_format: TextureFormat,
 ) -> (RenderPipeline, BindGroupLayout) {
     // Load SPIR-V shaders
-    let data: &[u8] = include_bytes!(env!("shaders.spv"));
+    let data: &[u8] = include_bytes!(env!("point_cloud.spv"));
     let spirv = Cow::Owned(wgpu::util::make_spirv_raw(&data).into_owned());
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("Point Cloud Shader"),

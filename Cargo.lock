@@ -709,6 +709,7 @@ checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "bytemuck",
  "libm",
+ "serde_core",
 ]
 
 [[package]]
@@ -1009,6 +1010,14 @@ checksum = "b49715b7073f385ba4bc528e5747d02e66cb39c6146efb66b781f131f0fb399c"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "laser"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "spirv-std",
 ]
 
 [[package]]
@@ -1579,6 +1588,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "point_cloud"
+version = "0.1.0"
+dependencies = [
+ "shared",
+ "spirv-std",
+]
+
+[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2010,14 +2027,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shaders"
-version = "0.1.0"
-dependencies = [
- "shared",
- "spirv-std",
-]
-
-[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2285,7 +2294,8 @@ dependencies = [
  "log",
  "pollster",
  "rand",
- "shaders",
+ "serde",
+ "serde_json",
  "shared",
  "spirv-builder",
  "thiserror 2.0.18",

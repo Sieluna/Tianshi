@@ -1,0 +1,10 @@
+[package]
+name = "point_cloud"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+shared.workspace = true
+spirv-std.workspace = true

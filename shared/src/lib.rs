@@ -2,6 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
+use spirv_std::num_traits::Float;
 
 /// Point cloud rendering uniforms
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -48,6 +49,23 @@ pub struct PointCloudUniforms {
     pub glitch_effects_3: Vec4,
 }
 
+/// Laser rendering uniforms
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct LaserUniforms {
+    /// Model-view matrix (4x4)
+    pub model_view: Mat4,
+
+    /// Projection matrix (4x4)
+    pub projection: Mat4,
+
+    /// Camera position (world space)
+    pub camera_pos: Vec3,
+
+    /// Camera fade distance
+    pub camera_fade_distance: f32,
+}
+
 /// Point vertex data with per-point attributes
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -59,18 +77,78 @@ pub struct PointVertex {
     pub delay: f32,
 }
 
+/// Per-laser instance data
+#[derive(Copy, Clone, Pod, Zeroable)]
+#[repr(C)]
+pub struct LaserInstance {
+    /// Start point (world space)
+    pub src: [f32; 3],
+    /// Animation progress [0, 1]
+    pub progress: f32,
+
+    /// End point (world space)
+    pub target: [f32; 3],
+    /// Base opacity [0, 1]
+    pub base_opacity: f32,
+
+    /// Random offset for noise [0, 1]
+    pub random_offset: f32,
+
+    /// Padding
+    pub _padding0: f32,
+    pub _padding1: f32,
+    pub _padding2: f32,
+}
+
 #[inline(always)]
-pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+pub fn smoothstep(low: f32, high: f32, x: f32) -> f32 {
+    let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
 #[inline(always)]
-pub fn mix_f(a: f32, b: f32, t: f32) -> f32 {
-    a + t * (b - a)
+pub fn lerp(x: f32, y: f32, s: f32) -> f32 {
+    x + s * (y - x)
 }
 
 #[inline(always)]
-pub fn mix_v3(a: Vec3, b: Vec3, t: f32) -> Vec3 {
-    a + (b - a) * t
+pub fn lerp_3d(a: Vec3, b: Vec3, s: f32) -> Vec3 {
+    a + (b - a) * s
+}
+
+#[inline(always)]
+fn perm(index: i32, seed: i32) -> i32 {
+    let mut hash = index.wrapping_mul(seed);
+    hash = hash ^ (hash >> 13);
+    hash = hash.wrapping_mul(hash.wrapping_mul(15731).wrapping_add(74323));
+    hash = hash ^ (hash >> 16);
+    (hash.abs() % 256) as i32
+}
+
+#[inline(always)]
+pub fn fade(t: f32) -> f32 {
+    t * t * t * (t * (6.0 * t - 15.0) + 10.0)
+}
+
+#[inline(always)]
+fn grad(hash: i32, x: f32) -> f32 {
+    let grad_idx = hash & 15;
+    let gradient = if (grad_idx & 1) == 0 { 1.0 } else { -1.0 };
+    gradient * x
+}
+
+#[inline(always)]
+pub fn noise(x: f32, seed: i32) -> f32 {
+    let xi = x.floor() as i32;
+    let xf = x - x.floor();
+
+    let u = fade(xf);
+
+    let p0 = perm(xi, seed);
+    let p1 = perm(xi + 1, seed);
+
+    let g0 = grad(p0, xf);
+    let g1 = grad(p1, xf - 1.0);
+
+    (lerp(g0, g1, u) + 1.0) / 2.0
 }

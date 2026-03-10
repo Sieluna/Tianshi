@@ -8,7 +8,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use super::data::PointCloud;
+use super::model::PointCloud;
 use super::render::{Graphics, Rc, create_graphics};
 
 enum State {
@@ -177,8 +177,7 @@ impl ApplicationHandler<Graphics> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut graphics: Graphics) {
         // Load point cloud data
         if let Ok(cloud) = PointCloud::from_bytes(include_bytes!("../assets/pile.251dc1.bin")) {
-            let transformed = cloud.transform_normalized();
-            graphics.load_point_cloud(&transformed.points, &transformed.attributes);
+            graphics.load_point_cloud(&cloud.points, &cloud.attributes);
         } else {
             eprintln!("Could not load model.");
         }

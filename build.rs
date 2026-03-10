@@ -12,5 +12,6 @@ fn build_shader(path_to_crate: &str) {
 }
 
 fn main() {
-    build_shader("shaders");
+    build_shader("shaders/laser");
+    build_shader("shaders/point_cloud");
 }

@@ -1,11 +1,12 @@
 extern crate alloc;
 
 mod app;
-mod data;
+mod error;
+mod model;
 mod render;
 
 pub use app::App;
-pub use data::{BoundingBox, PointCloud, TransformedPointCloud};
+pub use model::{BoundingBox, Model, PointCloud};
 pub use render::Graphics;
 use winit::event_loop::EventLoop;
 

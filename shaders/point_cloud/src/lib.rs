@@ -1,7 +1,7 @@
 #![no_std]
 
-use shared::{PointCloudUniforms, mix_f, mix_v3, smoothstep};
-use spirv_std::glam::{Vec2, Vec3, Vec4, vec2, vec3, vec4};
+use shared::{PointCloudUniforms, lerp, lerp_3d, smoothstep};
+use spirv_std::glam::{Vec2, Vec3, Vec4};
 use spirv_std::num_traits::Float;
 use spirv_std::spirv;
 
@@ -39,9 +39,9 @@ pub fn point_cloud_vs(
     let scan_line_dist = (adjusted_scan_line_y - y_pos).abs();
 
     let mut alpha = point_active;
-    let mut color = vec3(0.8, 0.8, 0.8);
+    let mut color = Vec3::new(0.8, 0.8, 0.8);
     if scan_line_dist > 0.0 && scan_line_dist < uniforms.scan_line_width {
-        color = vec3(1.0, 1.0, 0.2);
+        color = Vec3::new(1.0, 1.0, 0.2);
     }
 
     // Cosine fade
@@ -67,7 +67,7 @@ pub fn point_cloud_vs(
     }
 
     // Camera distance fade
-    let mv_pos = uniforms.model_view * vec4(pos.x, pos.y, pos.z, 1.0);
+    let mv_pos = uniforms.model_view * Vec4::new(pos.x, pos.y, pos.z, 1.0);
     let view_z = -mv_pos.z;
     let dist_alpha = 1.0
         - ((view_z - uniforms.camera_fade_start)
@@ -84,7 +84,7 @@ pub fn point_cloud_vs(
         uniforms.glitch_effects_0,
         uniforms.glitch_effects_1,
         uniforms.glitch_effects_2,
-        uniforms.glitch_effects_3
+        uniforms.glitch_effects_3,
     ];
     for i in 0..4 {
         let glitch = glitches[i];
@@ -104,22 +104,22 @@ pub fn point_cloud_vs(
 
     // Projection + billboard
     let proj = uniforms.projection * glitched;
-    let screen_pos = vec2(proj.x / proj.w, proj.y / proj.w);
-    let screen_uv = vec2((proj.x / proj.w + 1.0) * 0.5, (proj.y / proj.w + 1.0) * 0.5);
+    let screen_pos = Vec2::new(proj.x / proj.w, proj.y / proj.w);
+    let screen_uv = Vec2::new((proj.x / proj.w + 1.0) * 0.5, (proj.y / proj.w + 1.0) * 0.5);
     let ps = (size * uniforms.point_size_scale * dist_alpha + 0.5) / uniforms.resolution_y;
 
     let (offset, coord): (Vec2, Vec2) = match vert_in_quad {
-        0 => (vec2(-ps, ps), vec2(0.0, 1.0)),
-        1 => (vec2(-ps, -ps), vec2(0.0, 0.0)),
-        2 => (vec2(ps, ps), vec2(1.0, 1.0)),
-        3 => (vec2(-ps, -ps), vec2(0.0, 0.0)),
-        4 => (vec2(ps, -ps), vec2(1.0, 0.0)),
-        _ => (vec2(ps, ps), vec2(1.0, 1.0)),
+        0 => (Vec2::new(-ps, ps), Vec2::new(0.0, 1.0)),
+        1 => (Vec2::new(-ps, -ps), Vec2::new(0.0, 0.0)),
+        2 => (Vec2::new(ps, ps), Vec2::new(1.0, 1.0)),
+        3 => (Vec2::new(-ps, -ps), Vec2::new(0.0, 0.0)),
+        4 => (Vec2::new(ps, -ps), Vec2::new(1.0, 0.0)),
+        _ => (Vec2::new(ps, ps), Vec2::new(1.0, 1.0)),
     };
 
     let final_xy = screen_pos + offset;
 
-    *out_pos = vec4(final_xy.x, final_xy.y, proj.z / proj.w, 1.0);
+    *out_pos = Vec4::new(final_xy.x, final_xy.y, proj.z / proj.w, 1.0);
     *out_coord = coord;
     *out_alpha = final_alpha;
     *out_color = color;
@@ -137,7 +137,7 @@ pub fn point_cloud_fs(
     #[spirv(location = 4)] v_screen_uv: Vec2,
     output: &mut Vec4,
 ) {
-    let center = coord - vec2(0.5, 0.5);
+    let center = coord - Vec2::new(0.5, 0.5);
     let dist = center.length();
     let radius = 0.5_f32;
 
@@ -153,7 +153,7 @@ pub fn point_cloud_fs(
         let fade1 = smoothstep(feather_end, feather_start, dist);
         let fade2 = smoothstep(feather_end * 0.8, feather_start, dist);
         let mix_ratio = uniforms.feather_width.clamp(0.1, 1.0);
-        let feather_alpha = mix_f(fade1, fade2, mix_ratio);
+        let feather_alpha = lerp(fade1, fade2, mix_ratio);
         let dist_fade = 1.0 - (dist / radius).powf(2.0);
         let extra_feather = 1.0 - (dist / radius).powf(1.0 + uniforms.feather_width * 2.0);
         alpha = v_alpha * feather_alpha * dist_fade * extra_feather;
@@ -162,10 +162,10 @@ pub fn point_cloud_fs(
     let inner_glow = 1.0 - smoothstep(0.0, uniforms.core_radius * 3.0, dist);
     let mut final_color = v_color + v_color * inner_glow * uniforms.inner_glow_strength;
 
-    let compressed = final_color / (final_color + vec3(1.0, 1.0, 1.0));
-    final_color = mix_v3(final_color, compressed, uniforms.compress_strength);
+    let compressed = final_color / (final_color + Vec3::new(1.0, 1.0, 1.0));
+    final_color = lerp_3d(final_color, compressed, uniforms.compress_strength);
 
-    let brightness = v_color.dot(vec3(0.299, 0.587, 0.114));
+    let brightness = v_color.dot(Vec3::new(0.299, 0.587, 0.114));
     if brightness > 0.6 {
         alpha *= 1.0 + (brightness - 0.6) * 0.5;
     }
@@ -174,12 +174,12 @@ pub fn point_cloud_fs(
     let left_x = (uv.x - 0.4) * 0.8 + 0.4;
     let right_x = (uv.x - 0.4) * 0.6 + 0.4;
     let mapped_x = if uv.x < 0.4 { left_x } else { right_x };
-    let vignette_dist = vec2(mapped_x, uv.y).distance(vec2(0.4, 0.5));
+    let vignette_dist = Vec2::new(mapped_x, uv.y).distance(Vec2::new(0.4, 0.5));
     let mut vignette = 1.0_f32;
     if vignette_dist > 0.3 {
         vignette = 1.0 - smoothstep(0.4, 0.5, vignette_dist);
     }
     alpha *= vignette;
 
-    *output = vec4(final_color.x, final_color.y, final_color.z, alpha);
+    *output = Vec4::new(final_color.x, final_color.y, final_color.z, alpha);
 }
