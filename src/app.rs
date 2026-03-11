@@ -1,4 +1,6 @@
-use glam::{Mat4, Vec3, Vec4};
+use core::f32::consts::PI;
+
+use glam::{Mat4, Vec3};
 use shared::PointCloudUniforms;
 use winit::{
     application::ApplicationHandler,
@@ -8,11 +10,15 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use super::model::PointCloud;
+use super::controller::Controller;
+use super::model::load_models;
 use super::render::{Graphics, Rc, create_graphics};
 
 enum State {
-    Ready(Graphics),
+    Ready {
+        controller: Controller,
+        graphics: Graphics,
+    },
     Init(Option<EventLoopProxy<Graphics>>),
 }
 
@@ -33,7 +39,7 @@ impl App {
             state: State::Init(Some(event_loop.create_proxy())),
             time: 0.0,
             camera_phi: 0.5,
-            camera_theta: std::f32::consts::PI / 3.0,
+            camera_theta: PI / 3.0,
             camera_distance: 2400.0,
             last_mouse_x: 0.0,
             last_mouse_y: 0.0,
@@ -43,6 +49,12 @@ impl App {
 
     fn update(&mut self, delta_time: f32) {
         self.time += delta_time;
+
+        // Update controller logic
+        if let State::Ready { controller, .. } = &mut self.state {
+            let delta_ms = delta_time * 1000.0;
+            controller.update(delta_ms);
+        }
     }
 
     fn get_camera_position(&self) -> Vec3 {
@@ -66,7 +78,7 @@ impl App {
     }
 
     fn get_projection_matrix(&self, aspect_ratio: f32) -> Mat4 {
-        let fov = std::f32::consts::PI / 3.0;
+        let fov = PI / 3.0;
         let near = 0.1;
         let far = 3000.0;
         Mat4::perspective_rh(fov, aspect_ratio, near, far)
@@ -74,9 +86,9 @@ impl App {
 
     fn draw(&mut self) {
         let (width, height) = match &self.state {
-            State::Ready(gfx) => {
-                let w = gfx.surface_config().width as f32;
-                let h = gfx.surface_config().height as f32;
+            State::Ready { graphics, .. } => {
+                let w = graphics.surface_config().width as f32;
+                let h = graphics.surface_config().height as f32;
                 (w, h)
             }
             _ => return,
@@ -85,43 +97,54 @@ impl App {
         let aspect_ratio = width / height;
         let view = self.get_view_matrix();
         let proj = self.get_projection_matrix(aspect_ratio);
-        let model_view = view; // In this case, model is identity
+        let model_view = view;
 
-        // Create uniforms with dynamic values
-        let uniforms = PointCloudUniforms {
-            model_view,
-            projection: proj,
-            scan_line_y1: 500.0 + (self.time * 200.0).sin() * 100.0,
-            scan_line_y2: 300.0 + (self.time * 180.0 + 2.0).sin() * 100.0,
-            scan_line_y3: 100.0 + (self.time * 160.0 + 4.0).sin() * 100.0,
-            scan_line_width: 50.0,
-            camera_fade_distance: 2000.0,
-            camera_fade_start: 100.0,
-            feather_width: 0.5,
-            core_radius: 0.3,
-            inner_glow_strength: 0.8,
-            compress_strength: 0.6,
-            point_size_scale: 0.1,
-            is_active: 1,
-            resolution_x: width,
-            resolution_y: height,
-            glitch_y_range: 10.0,
-            glitch_x_offset: 20.0,
-            glitch_effects_0: Vec4::ZERO,
-            glitch_effects_1: Vec4::ZERO,
-            glitch_effects_2: Vec4::ZERO,
-            glitch_effects_3: Vec4::ZERO,
-        };
+        if let State::Ready {
+            graphics,
+            controller,
+        } = &mut self.state
+        {
+            let current = &controller.actor;
+            let scan_line_y1 = super::actor::compute_scanline_y(0, current.scan_elapsed_ms);
+            let scan_line_y2 = super::actor::compute_scanline_y(1, current.scan_elapsed_ms);
+            let scan_line_y3 = super::actor::compute_scanline_y(2, current.scan_elapsed_ms);
 
-        if let State::Ready(gfx) = &mut self.state {
-            gfx.update_point_uniforms(&uniforms);
-            gfx.draw();
+            let glitch_effects = controller.glitch_effects;
+
+            // Create uniforms with dynamic values
+            let uniforms = PointCloudUniforms {
+                model_view,
+                projection: proj,
+                scan_line_y1,
+                scan_line_y2,
+                scan_line_y3,
+                scan_line_width: 50.0,
+                camera_fade_distance: 2000.0,
+                camera_fade_start: 100.0,
+                feather_width: 0.5,
+                core_radius: 0.3,
+                inner_glow_strength: 0.8,
+                compress_strength: 0.6,
+                point_size_scale: 0.1,
+                is_active: current.is_active_uniform,
+                resolution_x: width,
+                resolution_y: height,
+                glitch_y_range: 10.0,
+                glitch_x_offset: 20.0,
+                glitch_effects_0: glitch_effects[0],
+                glitch_effects_1: glitch_effects[1],
+                glitch_effects_2: glitch_effects[2],
+                glitch_effects_3: glitch_effects[3],
+            };
+
+            graphics.update_point_uniforms(&uniforms);
+            graphics.draw();
         }
     }
 
     fn resized(&mut self, size: PhysicalSize<u32>) {
-        if let State::Ready(gfx) = &mut self.state {
-            gfx.resize(size);
+        if let State::Ready { graphics, .. } = &mut self.state {
+            graphics.resize(size);
         }
     }
 
@@ -134,7 +157,7 @@ impl App {
             self.camera_theta -= delta_y * 0.01;
 
             // Clamp theta to avoid gimbal lock
-            self.camera_theta = self.camera_theta.clamp(0.1, std::f32::consts::PI - 0.1);
+            self.camera_theta = self.camera_theta.clamp(0.1, PI - 0.1);
         }
 
         self.last_mouse_x = x;
@@ -175,15 +198,19 @@ impl ApplicationHandler<Graphics> for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut graphics: Graphics) {
-        // Load point cloud data
-        if let Ok(cloud) = PointCloud::from_bytes(include_bytes!("../assets/pile.251dc1.bin")) {
-            graphics.load_point_cloud(&cloud.points, &cloud.attributes);
-        } else {
-            eprintln!("Could not load model.");
-        }
+        // Load models and create controller
+        let models = load_models();
+        let mut controller = Controller::new(models);
+
+        let model = &controller.models[1];
+        graphics.load_point_cloud(&model.data.points, &model.data.attributes);
+        controller.glitch_loop_active = true;
 
         graphics.request_redraw();
-        self.state = State::Ready(graphics);
+        self.state = State::Ready {
+            graphics,
+            controller,
+        };
     }
 
     fn window_event(
@@ -195,10 +222,11 @@ impl ApplicationHandler<Graphics> for App {
         match event {
             WindowEvent::Resized(size) => self.resized(size),
             WindowEvent::RedrawRequested => {
-                self.update(1.0 / 60.0); // Assume 60 FPS
+                let delta_time = 1.0 / 60.0; // Assume 60 FPS
+                self.update(delta_time);
                 self.draw();
-                if let State::Ready(gfx) = &self.state {
-                    gfx.request_redraw();
+                if let State::Ready { graphics, .. } = &self.state {
+                    graphics.request_redraw();
                 }
             }
             WindowEvent::MouseInput { state, .. } => {

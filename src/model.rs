@@ -199,6 +199,26 @@ impl Default for Model {
     }
 }
 
+pub fn load_models() -> Vec<Model> {
+    let mut models = Vec::new();
+
+    // Load factory model
+    let factory_json = include_str!("../assets/factory.json");
+    let mut factory_model: Model = serde_json::from_str(factory_json).unwrap();
+    let factory_bin = include_bytes!("../assets/factory.bd9a36.bin");
+    factory_model.data = PointCloud::from_bytes(factory_bin).unwrap();
+    models.push(factory_model);
+
+    // Load pile model
+    let pile_json = include_str!("../assets/pile.json");
+    let mut pile_model: Model = serde_json::from_str(pile_json).unwrap();
+    let pile_bin = include_bytes!("../assets/pile.251dc1.bin");
+    pile_model.data = PointCloud::from_bytes(pile_bin).unwrap();
+    models.push(pile_model);
+
+    models
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

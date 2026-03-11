@@ -1,15 +1,15 @@
 {
   "point_size_scale": 1.0,
-  "offset": {
-    "x": -550.0,
-    "y": 300.0,
-    "z": -300.0
-  },
-  "pivot": {
-    "x": -50.0,
-    "y": 0.0,
-    "z": 0.0
-  },
+  "offset": [
+    -550.0,
+    300.0,
+    -300.0
+  ],
+  "pivot": [
+    -50.0,
+    0.0,
+    0.0
+  ],
   "scale": 1.25,
   "camera_fade_distance": 4000,
   "camera_fade_start": 600,

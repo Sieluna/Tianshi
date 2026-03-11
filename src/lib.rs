@@ -1,12 +1,16 @@
 extern crate alloc;
 
+mod actor;
+mod animation;
 mod app;
+mod controller;
 mod error;
+mod glitch;
+mod laser;
 mod model;
 mod render;
 
 pub use app::App;
-pub use model::{BoundingBox, Model, PointCloud};
 pub use render::Graphics;
 use winit::event_loop::EventLoop;
 
