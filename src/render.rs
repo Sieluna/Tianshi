@@ -1,16 +1,18 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
-use shared::PointCloudUniforms;
-use wgpu::util::DeviceExt;
+use shared::{LaserInstance, LaserUniforms, PointCloudUniforms};
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferBindingType, BufferUsages,
-    Color, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState, Instance,
-    Limits, LoadOp, MemoryHints, Operations, PowerPreference, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface,
-    SurfaceConfiguration, TextureFormat, TextureViewDescriptor, VertexState,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType,
+    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
+    Features, FragmentState, FrontFace, Instance, Limits, LoadOp, MemoryHints, Operations,
+    PipelineLayoutDescriptor, PolygonMode, PowerPreference, PrimitiveState, PrimitiveTopology,
+    Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, StoreOp, Surface, SurfaceConfiguration, TextureFormat, TextureViewDescriptor,
+    VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
 };
 use winit::{dpi::PhysicalSize, event_loop::EventLoopProxy, window::Window};
 
@@ -36,7 +38,7 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         .request_device(&DeviceDescriptor {
             label: None,
             required_features: Features::empty(),
-            required_limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+            required_limits: Limits::downlevel_defaults(),
             experimental_features: Default::default(),
             memory_hints: MemoryHints::Performance,
             trace: Default::default(),
@@ -52,10 +54,10 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
     surface.configure(&device, &surface_config);
 
     let (point_cloud_pipeline, point_bind_group_layout) =
-        create_pipeline(&device, surface_config.format);
+        create_point_cloud_pipeline(&device, surface_config.format);
 
     // Create uniform buffer for point cloud
-    let point_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let point_uniform_buffer = device.create_buffer(&BufferDescriptor {
         label: Some("Point Cloud Uniform Buffer"),
         size: core::mem::size_of::<PointCloudUniforms>() as u64,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
@@ -72,6 +74,42 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         }],
     });
 
+    let (laser_pipeline, laser_bind_group_layout) =
+        create_laser_pipeline(&device, surface_config.format);
+
+    // Create laser uniform buffer
+    let laser_uniform_buffer = device.create_buffer(&BufferDescriptor {
+        label: Some("Laser Uniform Buffer"),
+        size: core::mem::size_of::<LaserUniforms>() as u64,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Create laser storage buffer
+    const MAX_LASER_INSTANCES: usize = 2000;
+    let laser_storage_buffer = device.create_buffer(&BufferDescriptor {
+        label: Some("Laser Storage Buffer"),
+        size: (core::mem::size_of::<LaserInstance>() * MAX_LASER_INSTANCES) as u64,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Create laser bind group
+    let laser_bind_group = device.create_bind_group(&BindGroupDescriptor {
+        label: Some("Laser Bind Group"),
+        layout: &laser_bind_group_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: laser_uniform_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: laser_storage_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
     let gfx = Graphics {
         window: window.clone(),
         instance,
@@ -86,12 +124,17 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         point_cloud_position_buffer: None,
         point_cloud_data_buffer: None,
         point_count: 0,
+        laser_pipeline,
+        laser_uniform_buffer,
+        laser_storage_buffer,
+        laser_bind_group,
+        laser_instance_count: 0,
     };
 
     let _ = proxy.send_event(gfx);
 }
 
-fn create_pipeline(
+fn create_point_cloud_pipeline(
     device: &Device,
     swap_chain_format: TextureFormat,
 ) -> (RenderPipeline, BindGroupLayout) {
@@ -109,7 +152,7 @@ fn create_pipeline(
         entries: &[BindGroupLayoutEntry {
             binding: 0,
             visibility: ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
+            ty: BindingType::Buffer {
                 ty: BufferBindingType::Uniform,
                 has_dynamic_offset: false,
                 min_binding_size: None,
@@ -118,7 +161,7 @@ fn create_pipeline(
         }],
     });
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: Some("Point Cloud Pipeline Layout"),
         bind_group_layouts: &[&point_bind_group_layout],
         immediate_size: 0,
@@ -132,21 +175,21 @@ fn create_pipeline(
             entry_point: Some("point_cloud_vs"),
             buffers: &[
                 // Position buffer (location 0)
-                wgpu::VertexBufferLayout {
+                VertexBufferLayout {
                     array_stride: 12, // 3 * f32
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
+                    step_mode: VertexStepMode::Vertex,
+                    attributes: &[VertexAttribute {
+                        format: VertexFormat::Float32x3,
                         offset: 0,
                         shader_location: 0,
                     }],
                 },
                 // Point data buffer (location 1): active, size, layer, delay
-                wgpu::VertexBufferLayout {
+                VertexBufferLayout {
                     array_stride: 16, // 4 * f32
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x4,
+                    step_mode: VertexStepMode::Vertex,
+                    attributes: &[VertexAttribute {
+                        format: VertexFormat::Float32x4,
                         offset: 0,
                         shader_location: 1,
                     }],
@@ -160,13 +203,13 @@ fn create_pipeline(
             targets: &[Some(swap_chain_format.into())],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState {
+        primitive: PrimitiveState {
             topology: PrimitiveTopology::TriangleList,
             strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
+            front_face: FrontFace::Ccw,
             cull_mode: None,
             unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
+            polygon_mode: PolygonMode::Fill,
             conservative: false,
         },
         depth_stencil: None,
@@ -178,6 +221,86 @@ fn create_pipeline(
     (pipeline, point_bind_group_layout)
 }
 
+fn create_laser_pipeline(
+    device: &Device,
+    swap_chain_format: TextureFormat,
+) -> (RenderPipeline, BindGroupLayout) {
+    // Load SPIR-V shader
+    let data: &[u8] = include_bytes!(env!("laser.spv"));
+    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(&data).into_owned());
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("Laser Shader"),
+        source: ShaderSource::SpirV(spirv),
+    });
+
+    // Create bind group layout for laser uniforms
+    let laser_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("Laser Bind Group Layout"),
+        entries: &[
+            // Uniform buffer
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX_FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Storage buffer (read-only)
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        label: Some("Laser Pipeline Layout"),
+        bind_group_layouts: &[&laser_bind_group_layout],
+        immediate_size: 0,
+    });
+
+    let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some("Laser Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: VertexState {
+            module: &shader,
+            entry_point: Some("laser_vs"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(FragmentState {
+            module: &shader,
+            entry_point: Some("laser_fs"),
+            targets: &[Some(swap_chain_format.into())],
+            compilation_options: Default::default(),
+        }),
+        primitive: PrimitiveState {
+            topology: PrimitiveTopology::LineList,
+            strip_index_format: None,
+            front_face: FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    (pipeline, laser_bind_group_layout)
+}
+
 #[derive(Debug)]
 pub struct Graphics {
     window: Rc<Window>,
@@ -187,12 +310,21 @@ pub struct Graphics {
     adapter: Adapter,
     device: Device,
     queue: Queue,
+
+    // Point cloud rendering
     point_cloud_pipeline: RenderPipeline,
     point_uniform_buffer: Buffer,
     point_bind_group: BindGroup,
     point_cloud_position_buffer: Option<Buffer>,
     point_cloud_data_buffer: Option<Buffer>,
     point_count: u32,
+
+    // Laser rendering
+    laser_pipeline: RenderPipeline,
+    laser_uniform_buffer: Buffer,
+    laser_storage_buffer: Buffer,
+    laser_bind_group: BindGroup,
+    laser_instance_count: u32,
 }
 
 impl Graphics {
@@ -244,22 +376,18 @@ impl Graphics {
         }
 
         // Create position buffer
-        let position_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Point Cloud Position Buffer"),
-                contents: bytemuck::cast_slice(&position_data),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let position_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Point Cloud Position Buffer"),
+            contents: bytemuck::cast_slice(&position_data),
+            usage: BufferUsages::VERTEX,
+        });
 
         // Create point data buffer
-        let data_buffer_gpu = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Point Cloud Data Buffer"),
-                contents: bytemuck::cast_slice(&data_buffer),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let data_buffer_gpu = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Point Cloud Data Buffer"),
+            contents: bytemuck::cast_slice(&data_buffer),
+            usage: BufferUsages::VERTEX,
+        });
 
         self.point_cloud_position_buffer = Some(position_buffer);
         self.point_cloud_data_buffer = Some(data_buffer_gpu);
@@ -269,6 +397,22 @@ impl Graphics {
     pub fn update_point_uniforms(&self, uniforms: &PointCloudUniforms) {
         self.queue
             .write_buffer(&self.point_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+    }
+
+    pub fn update_laser_uniforms(&self, uniforms: &LaserUniforms) {
+        self.queue
+            .write_buffer(&self.laser_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+    }
+
+    pub fn update_laser_instances(&mut self, instances: &[LaserInstance]) {
+        if !instances.is_empty() {
+            self.queue.write_buffer(
+                &self.laser_storage_buffer,
+                0,
+                bytemuck::cast_slice(instances),
+            );
+        }
+        self.laser_instance_count = instances.len() as u32;
     }
 
     pub fn draw(&mut self) {
@@ -310,6 +454,13 @@ impl Graphics {
                     r_pass.set_vertex_buffer(1, data_buffer.slice(..));
                     r_pass.draw(0..self.point_count, 0..1);
                 }
+            }
+
+            // Draw laser rays
+            if self.laser_instance_count > 0 {
+                r_pass.set_pipeline(&self.laser_pipeline);
+                r_pass.set_bind_group(0, &self.laser_bind_group, &[]);
+                r_pass.draw(0..2, 0..self.laser_instance_count);
             }
         }
 

@@ -2,10 +2,11 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
+#[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 
 /// Point cloud rendering uniforms
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct PointCloudUniforms {
     /// Model-view matrix (4x4)
@@ -50,7 +51,7 @@ pub struct PointCloudUniforms {
 }
 
 /// Laser rendering uniforms
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct LaserUniforms {
     /// Model-view matrix (4x4)
@@ -67,7 +68,7 @@ pub struct LaserUniforms {
 }
 
 /// Point vertex data with per-point attributes
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct PointVertex {
     pub position: [f32; 3],
@@ -78,7 +79,7 @@ pub struct PointVertex {
 }
 
 /// Per-laser instance data
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct LaserInstance {
     /// Start point (world space)

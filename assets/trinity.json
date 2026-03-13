@@ -1,0 +1,17 @@
+{
+  "point_size_scale": 1.25,
+  "offset": [
+    -550,
+    -400,
+    -200
+  ],
+  "pivot": [
+    0,
+    0,
+    0
+  ],
+  "scale": 1.25,
+  "camera_fade_distance": 3500,
+  "camera_fade_start": 500,
+  "laser_mode": "random"
+}

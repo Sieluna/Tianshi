@@ -1,7 +1,7 @@
 use core::f32::consts::PI;
 
 use glam::{Mat4, Vec3};
-use shared::PointCloudUniforms;
+use shared::{LaserUniforms, PointCloudUniforms};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -95,9 +95,9 @@ impl App {
         };
 
         let aspect_ratio = width / height;
-        let view = self.get_view_matrix();
-        let proj = self.get_projection_matrix(aspect_ratio);
-        let model_view = view;
+        let camera_pos = self.get_camera_position();
+        let model_view = self.get_view_matrix();
+        let projection = self.get_projection_matrix(aspect_ratio);
 
         if let State::Ready {
             graphics,
@@ -105,16 +105,14 @@ impl App {
         } = &mut self.state
         {
             let current = &controller.actor;
-            let scan_line_y1 = super::actor::compute_scanline_y(0, current.scan_elapsed_ms);
-            let scan_line_y2 = super::actor::compute_scanline_y(1, current.scan_elapsed_ms);
-            let scan_line_y3 = super::actor::compute_scanline_y(2, current.scan_elapsed_ms);
+            let [scan_line_y1, scan_line_y2, scan_line_y3] = current.get_scanline_ys();
 
             let glitch_effects = controller.glitch_effects;
 
             // Create uniforms with dynamic values
             let uniforms = PointCloudUniforms {
                 model_view,
-                projection: proj,
+                projection,
                 scan_line_y1,
                 scan_line_y2,
                 scan_line_y3,
@@ -136,8 +134,18 @@ impl App {
                 glitch_effects_2: glitch_effects[2],
                 glitch_effects_3: glitch_effects[3],
             };
-
             graphics.update_point_uniforms(&uniforms);
+
+            let laser_uniforms = LaserUniforms {
+                model_view,
+                projection,
+                camera_pos,
+                camera_fade_distance: 2000.0,
+            };
+            graphics.update_laser_uniforms(&laser_uniforms);
+
+            graphics.update_laser_instances(&current.laser_pool.instances);
+
             graphics.draw();
         }
     }
@@ -202,7 +210,7 @@ impl ApplicationHandler<Graphics> for App {
         let models = load_models();
         let mut controller = Controller::new(models);
 
-        let model = &controller.models[1];
+        let model = &controller.models[2];
         graphics.load_point_cloud(&model.data.points, &model.data.attributes);
         controller.glitch_loop_active = true;
 

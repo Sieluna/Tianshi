@@ -2,6 +2,7 @@
 
 use shared::{PointCloudUniforms, lerp, lerp_3d, smoothstep};
 use spirv_std::glam::{Vec2, Vec3, Vec4};
+#[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 use spirv_std::spirv;
 

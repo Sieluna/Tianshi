@@ -1,5 +1,9 @@
 use shared::fade;
 
+use super::animation::{FadeAnimation, FadeDirection};
+use super::laser::LaserRayPool;
+use super::model::Model;
+
 /// Scanline durations for 3 cascading lines
 const SCANLINE_DURATIONS: [f32; 3] = [3000.0, 1500.0, 1000.0];
 
@@ -37,123 +41,86 @@ pub fn compute_scanline_y(line_index: usize, elapsed_ms: f32) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ActorState {
     Inactive,
-    FadingIn { elapsed_ms: f32, duration_ms: f32 },
+    Transition(FadeAnimation),
     Active,
-    FadingOut { elapsed_ms: f32, duration_ms: f32 },
 }
 
-/// Result of updating an actor
-pub struct ActorUpdateResult {
-    pub scan_line_ys: [f32; 3],
-    pub alpha: f32,
-    pub is_done_fading_out: bool,
-}
-
-/// Point cloud actor for rendering a single model
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PointCloudActor {
     pub scan_elapsed_ms: f32, // Elapsed time for scanline animation
     pub fade_alpha: f32,      // Current alpha value
     pub state: ActorState,
-    pub point_size_scale: f32,
-    pub is_active_uniform: u32, // 1=normal, 0=hide above scanline
+    pub is_active_uniform: u32,   // 1=normal, 0=hide above scanline
+    pub laser_pool: LaserRayPool, // Laser rays are managed by the actor's state timeline
 }
 
 impl PointCloudActor {
-    pub fn new(point_size_scale: f32) -> Self {
+    pub fn new() -> Self {
         Self {
             scan_elapsed_ms: 0.0,
             fade_alpha: 0.0,
             state: ActorState::Inactive,
-            point_size_scale,
             is_active_uniform: 0,
+            laser_pool: LaserRayPool::new(2000, 20),
         }
+    }
+
+    /// Get all three scanline Y positions
+    pub fn get_scanline_ys(&self) -> [f32; 3] {
+        [
+            compute_scanline_y(0, self.scan_elapsed_ms),
+            compute_scanline_y(1, self.scan_elapsed_ms),
+            compute_scanline_y(2, self.scan_elapsed_ms),
+        ]
     }
 
     /// Start fade-in animation.
     pub fn fade_in(&mut self, duration_ms: f32) {
-        self.state = ActorState::FadingIn {
-            elapsed_ms: 0.0,
-            duration_ms,
-        };
+        self.state = ActorState::Transition(FadeAnimation::new(FadeDirection::In, duration_ms));
         self.scan_elapsed_ms = 0.0;
         self.is_active_uniform = 1;
     }
 
     /// Start fade-out animation.
     pub fn fade_out(&mut self, duration_ms: f32) {
-        self.state = ActorState::FadingOut {
-            elapsed_ms: 0.0,
-            duration_ms,
-        };
+        self.state = ActorState::Transition(FadeAnimation::new(FadeDirection::Out, duration_ms));
         self.is_active_uniform = 0;
     }
 
     /// Update actor state and return animation result.
-    pub fn update(&mut self, delta_ms: f32) -> ActorUpdateResult {
+    pub fn update(&mut self, delta_ms: f32, model: &Model) {
         // Update state machine
-        match self.state {
+        match &mut self.state {
             ActorState::Inactive => {
                 // Do nothing
             }
-            ActorState::FadingIn {
-                elapsed_ms,
-                duration_ms,
-            } => {
-                let new_elapsed = elapsed_ms + delta_ms;
-                let t = (new_elapsed / duration_ms).min(1.0);
-                self.fade_alpha = t;
+            ActorState::Transition(fade_anim) => {
+                self.fade_alpha = fade_anim.update(delta_ms);
 
-                if new_elapsed >= duration_ms {
-                    self.state = ActorState::Active;
-                    self.fade_alpha = 1.0;
-                } else {
-                    self.state = ActorState::FadingIn {
-                        elapsed_ms: new_elapsed,
-                        duration_ms,
+                if fade_anim.is_finished() {
+                    self.state = match fade_anim.direction {
+                        FadeDirection::In => ActorState::Active,
+                        FadeDirection::Out => ActorState::Inactive,
                     };
                 }
+
+                // Continue scanline animation during fade
+                self.scan_elapsed_ms += delta_ms;
+
+                // Spawn laser rays during transitions for scanline 1 and 2
+                let mut rng = rand::rng();
+                let scan_y1 = compute_scanline_y(0, self.scan_elapsed_ms);
+                let scan_y2 = compute_scanline_y(1, self.scan_elapsed_ms);
+                self.laser_pool.spawn_batch(&mut rng, model, scan_y1, 1.0);
+                self.laser_pool.spawn_batch(&mut rng, model, scan_y2, 0.4);
             }
             ActorState::Active => {
                 // Continue scanline animation
-            }
-            ActorState::FadingOut {
-                elapsed_ms,
-                duration_ms,
-            } => {
-                let new_elapsed = elapsed_ms + delta_ms;
-                let t = (new_elapsed / duration_ms).min(1.0);
-                self.fade_alpha = 1.0 - t;
-
-                if new_elapsed >= duration_ms {
-                    self.state = ActorState::Inactive;
-                    self.fade_alpha = 0.0;
-                } else {
-                    self.state = ActorState::FadingOut {
-                        elapsed_ms: new_elapsed,
-                        duration_ms,
-                    };
-                }
+                self.scan_elapsed_ms += delta_ms;
             }
         }
 
-        // Update scanline animation for Active and FadingIn states
-        let is_animating = matches!(self.state, ActorState::FadingIn { .. } | ActorState::Active);
-        if is_animating {
-            self.scan_elapsed_ms += delta_ms;
-        }
-
-        // Compute scanline positions
-        let scan_line_ys = [
-            compute_scanline_y(0, self.scan_elapsed_ms),
-            compute_scanline_y(1, self.scan_elapsed_ms),
-            compute_scanline_y(2, self.scan_elapsed_ms),
-        ];
-
-        ActorUpdateResult {
-            scan_line_ys,
-            alpha: self.fade_alpha,
-            is_done_fading_out: matches!(self.state, ActorState::Inactive),
-        }
+        // Update laser pool
+        self.laser_pool.update(delta_ms);
     }
 }

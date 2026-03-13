@@ -23,7 +23,7 @@ impl GlitchEffect {
         Self::default()
     }
 
-    /// Activate glitch effect with random parameters
+    /// Activate glitch effect with random parameters.
     pub fn activate<R: Rng>(&mut self, rng: &mut R) {
         self.lines.clear();
 
@@ -42,7 +42,7 @@ impl GlitchEffect {
         self.is_active = true;
     }
 
-    /// Update glitch animation
+    /// Update glitch animation.
     pub fn update(&mut self, delta_ms: f32) -> [Vec4; 4] {
         const PULSE_INTERVAL_MS: f32 = 80.0;
 

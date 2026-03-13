@@ -2,6 +2,7 @@
 
 use shared::{LaserInstance, LaserUniforms, lerp_3d, noise};
 use spirv_std::glam::{Vec3, Vec4, Vec4Swizzles};
+#[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 use spirv_std::spirv;
 
@@ -20,7 +21,7 @@ pub fn laser_vs(
     let laser = laser_data[instance_index as usize];
 
     let progress = laser.progress.clamp(0.0, 1.0);
-    let segment_param = vertex_index as f32;
+    let segment_param = ((vertex_index) & 1u32) as f32;
     let t = segment_param * progress;
 
     let src = Vec3::new(laser.src[0], laser.src[1], laser.src[2]);

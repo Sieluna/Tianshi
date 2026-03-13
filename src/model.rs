@@ -216,6 +216,13 @@ pub fn load_models() -> Vec<Model> {
     pile_model.data = PointCloud::from_bytes(pile_bin).unwrap();
     models.push(pile_model);
 
+    // Load trinity model
+    let trinity_json = include_str!("../assets/trinity.json");
+    let mut trinity_model: Model = serde_json::from_str(trinity_json).unwrap();
+    let trinity_bin = include_bytes!("../assets/trinity.d6c060.bin");
+    trinity_model.data = PointCloud::from_bytes(trinity_bin).unwrap();
+    models.push(trinity_model);
+
     models
 }
 
