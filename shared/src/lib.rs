@@ -5,6 +5,32 @@ use glam::{Mat4, Vec3, Vec4};
 #[allow(unused_imports)]
 use spirv_std::num_traits::Float;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum FadeState {
+    None = 0,
+    FadingIn = 1,
+    FadingOut = 2,
+}
+
+impl From<FadeState> for u32 {
+    #[inline]
+    fn from(state: FadeState) -> u32 {
+        state as u32
+    }
+}
+
+impl From<u32> for FadeState {
+    #[inline]
+    fn from(value: u32) -> Self {
+        match value {
+            1 => Self::FadingIn,
+            2 => Self::FadingOut,
+            _ => Self::None,
+        }
+    }
+}
+
 /// Point cloud rendering uniforms
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -32,8 +58,8 @@ pub struct PointCloudUniforms {
     pub compress_strength: f32,
     pub point_size_scale: f32,
 
-    /// Activation flag (0/1)
-    pub is_active: u32,
+    /// Fade parameters
+    pub fade_state: u32,
 
     /// Screen resolution
     pub resolution_x: f32,
@@ -123,7 +149,7 @@ fn perm(index: i32, seed: i32) -> i32 {
     hash = hash ^ (hash >> 13);
     hash = hash.wrapping_mul(hash.wrapping_mul(15731).wrapping_add(74323));
     hash = hash ^ (hash >> 16);
-    (hash.abs() % 256) as i32
+    hash.abs() % 256
 }
 
 #[inline(always)]

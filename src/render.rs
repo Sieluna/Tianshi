@@ -5,14 +5,15 @@ use shared::{LaserInstance, LaserUniforms, PointCloudUniforms};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType,
-    BufferDescriptor, BufferUsages, Color, CommandEncoderDescriptor, Device, DeviceDescriptor,
-    Features, FragmentState, FrontFace, Instance, Limits, LoadOp, MemoryHints, Operations,
-    PipelineLayoutDescriptor, PolygonMode, PowerPreference, PrimitiveState, PrimitiveTopology,
-    Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource,
-    ShaderStages, StoreOp, Surface, SurfaceConfiguration, TextureFormat, TextureViewDescriptor,
-    VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendState, Buffer,
+    BufferBindingType, BufferDescriptor, BufferUsages, Color, ColorTargetState, ColorWrites,
+    CommandEncoderDescriptor, Device, DeviceDescriptor, Features, FragmentState, FrontFace,
+    Instance, Limits, LoadOp, MemoryHints, Operations, PipelineLayoutDescriptor, PolygonMode,
+    PowerPreference, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
+    TextureFormat, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat,
+    VertexState, VertexStepMode,
 };
 use winit::{dpi::PhysicalSize, event_loop::EventLoopProxy, window::Window};
 
@@ -21,6 +22,101 @@ pub type Rc<T> = alloc::rc::Rc<T>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub type Rc<T> = alloc::sync::Arc<T>;
+
+pub enum RenderLevel {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug)]
+pub struct PointCloudActor {
+    pub uniform_buffer: Buffer,
+    pub bind_group: BindGroup,
+    pub position_buffer: Option<Buffer>,
+    pub data_buffer: Option<Buffer>,
+    pub point_count: u32,
+}
+
+impl PointCloudActor {
+    fn new(device: &Device, layout: &BindGroupLayout) -> Self {
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("Point Cloud Uniform Buffer"),
+            size: core::mem::size_of::<PointCloudUniforms>() as u64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Point Cloud Bind Group"),
+            layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+        Self {
+            uniform_buffer,
+            bind_group,
+            position_buffer: None,
+            data_buffer: None,
+            point_count: 0,
+        }
+    }
+
+    fn load_point_cloud(&mut self, device: &Device, positions: &[f32], point_data: &[f32]) {
+        let point_count = positions.len() / 3;
+        let vertex_count = point_count * 6;
+
+        let mut position_data = Vec::new();
+        for i in (0..positions.len()).step_by(3) {
+            if i + 2 < positions.len() {
+                let x = positions[i];
+                let y = positions[i + 1];
+                let z = positions[i + 2];
+                for _ in 0..6 {
+                    position_data.extend_from_slice(&[x, y, z]);
+                }
+            }
+        }
+
+        let mut data_buffer = Vec::new();
+        for i in (0..point_data.len()).step_by(4) {
+            if i + 3 < point_data.len() {
+                let active = point_data[i];
+                let size = point_data[i + 1];
+                let layer = point_data[i + 2];
+                let delay = point_data[i + 3];
+                for _ in 0..6 {
+                    data_buffer.extend_from_slice(&[active, size, layer, delay]);
+                }
+            }
+        }
+
+        let position_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Point Cloud Position Buffer"),
+            contents: bytemuck::cast_slice(&position_data),
+            usage: BufferUsages::VERTEX,
+        });
+
+        let data_buffer_gpu = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Point Cloud Data Buffer"),
+            contents: bytemuck::cast_slice(&data_buffer),
+            usage: BufferUsages::VERTEX,
+        });
+
+        self.position_buffer = Some(position_buffer);
+        self.data_buffer = Some(data_buffer_gpu);
+        self.point_count = vertex_count as u32;
+    }
+
+    fn update_uniforms(&self, queue: &Queue, uniforms: &PointCloudUniforms) {
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+    }
+
+    fn has_data(&self) -> bool {
+        self.position_buffer.is_some() && self.data_buffer.is_some() && self.point_count > 0
+    }
+}
 
 pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>) {
     let instance = Instance::default();
@@ -56,23 +152,8 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
     let (point_cloud_pipeline, point_bind_group_layout) =
         create_point_cloud_pipeline(&device, surface_config.format);
 
-    // Create uniform buffer for point cloud
-    let point_uniform_buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("Point Cloud Uniform Buffer"),
-        size: core::mem::size_of::<PointCloudUniforms>() as u64,
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    // Create bind group for point cloud
-    let point_bind_group = device.create_bind_group(&BindGroupDescriptor {
-        label: Some("Point Cloud Bind Group"),
-        layout: &point_bind_group_layout,
-        entries: &[BindGroupEntry {
-            binding: 0,
-            resource: point_uniform_buffer.as_entire_binding(),
-        }],
-    });
+    let current_actor = PointCloudActor::new(&device, &point_bind_group_layout);
+    let backup_actor = PointCloudActor::new(&device, &point_bind_group_layout);
 
     let (laser_pipeline, laser_bind_group_layout) =
         create_laser_pipeline(&device, surface_config.format);
@@ -119,11 +200,8 @@ pub async fn create_graphics(window: Rc<Window>, proxy: EventLoopProxy<Graphics>
         device,
         queue,
         point_cloud_pipeline,
-        point_uniform_buffer,
-        point_bind_group,
-        point_cloud_position_buffer: None,
-        point_cloud_data_buffer: None,
-        point_count: 0,
+        current_actor,
+        backup_actor,
         laser_pipeline,
         laser_uniform_buffer,
         laser_storage_buffer,
@@ -140,7 +218,7 @@ fn create_point_cloud_pipeline(
 ) -> (RenderPipeline, BindGroupLayout) {
     // Load SPIR-V shaders
     let data: &[u8] = include_bytes!(env!("point_cloud.spv"));
-    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(&data).into_owned());
+    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(data).into_owned());
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("Point Cloud Shader"),
         source: ShaderSource::SpirV(spirv),
@@ -200,7 +278,22 @@ fn create_point_cloud_pipeline(
         fragment: Some(FragmentState {
             module: &shader,
             entry_point: Some("point_cloud_fs"),
-            targets: &[Some(swap_chain_format.into())],
+            targets: &[Some(ColorTargetState {
+                format: swap_chain_format,
+                blend: Some(BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                }),
+                write_mask: ColorWrites::ALL,
+            })],
             compilation_options: Default::default(),
         }),
         primitive: PrimitiveState {
@@ -227,7 +320,7 @@ fn create_laser_pipeline(
 ) -> (RenderPipeline, BindGroupLayout) {
     // Load SPIR-V shader
     let data: &[u8] = include_bytes!(env!("laser.spv"));
-    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(&data).into_owned());
+    let spirv = Cow::Owned(wgpu::util::make_spirv_raw(data).into_owned());
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("Laser Shader"),
         source: ShaderSource::SpirV(spirv),
@@ -280,7 +373,22 @@ fn create_laser_pipeline(
         fragment: Some(FragmentState {
             module: &shader,
             entry_point: Some("laser_fs"),
-            targets: &[Some(swap_chain_format.into())],
+            targets: &[Some(ColorTargetState {
+                format: swap_chain_format,
+                blend: Some(BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add,
+                    },
+                }),
+                write_mask: ColorWrites::ALL,
+            })],
             compilation_options: Default::default(),
         }),
         primitive: PrimitiveState {
@@ -313,11 +421,8 @@ pub struct Graphics {
 
     // Point cloud rendering
     point_cloud_pipeline: RenderPipeline,
-    point_uniform_buffer: Buffer,
-    point_bind_group: BindGroup,
-    point_cloud_position_buffer: Option<Buffer>,
-    point_cloud_data_buffer: Option<Buffer>,
-    point_count: u32,
+    current_actor: PointCloudActor,
+    backup_actor: PointCloudActor,
 
     // Laser rendering
     laser_pipeline: RenderPipeline,
@@ -342,61 +447,32 @@ impl Graphics {
         self.surface.configure(&self.device, &self.surface_config);
     }
 
-    pub fn load_point_cloud(&mut self, positions: &[f32], point_data: &[f32]) {
-        // positions: flattened [x, y, z, x, y, z, ...] array
-        // point_data: flattened [active, size, layer, delay, active, size, layer, delay, ...] array
-        let point_count = positions.len() / 3;
-        let vertex_count = point_count * 6;
-
-        let mut position_data = Vec::new();
-        for i in (0..positions.len()).step_by(3) {
-            if i + 2 < positions.len() {
-                let x = positions[i];
-                let y = positions[i + 1];
-                let z = positions[i + 2];
-                // Each point creates 6 vertices (for quad)
-                for _ in 0..6 {
-                    position_data.extend_from_slice(&[x, y, z]);
-                }
-            }
-        }
-
-        let mut data_buffer = Vec::new();
-        for i in (0..point_data.len()).step_by(4) {
-            if i + 3 < point_data.len() {
-                let active = point_data[i];
-                let size = point_data[i + 1];
-                let layer = point_data[i + 2];
-                let delay = point_data[i + 3];
-                // Each point's data is repeated for 6 vertices
-                for _ in 0..6 {
-                    data_buffer.extend_from_slice(&[active, size, layer, delay]);
-                }
-            }
-        }
-
-        // Create position buffer
-        let position_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Point Cloud Position Buffer"),
-            contents: bytemuck::cast_slice(&position_data),
-            usage: BufferUsages::VERTEX,
-        });
-
-        // Create point data buffer
-        let data_buffer_gpu = self.device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Point Cloud Data Buffer"),
-            contents: bytemuck::cast_slice(&data_buffer),
-            usage: BufferUsages::VERTEX,
-        });
-
-        self.point_cloud_position_buffer = Some(position_buffer);
-        self.point_cloud_data_buffer = Some(data_buffer_gpu);
-        self.point_count = vertex_count as u32;
+    pub fn load_current_point_cloud(&mut self, positions: &[f32], point_data: &[f32]) {
+        self.current_actor
+            .load_point_cloud(&self.device, positions, point_data);
     }
 
-    pub fn update_point_uniforms(&self, uniforms: &PointCloudUniforms) {
-        self.queue
-            .write_buffer(&self.point_uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+    pub fn load_backup_point_cloud(&mut self, positions: &[f32], point_data: &[f32]) {
+        self.backup_actor
+            .load_point_cloud(&self.device, positions, point_data);
+    }
+
+    pub fn clear_backup_point_cloud(&mut self) {
+        self.backup_actor.position_buffer = None;
+        self.backup_actor.data_buffer = None;
+        self.backup_actor.point_count = 0;
+    }
+
+    pub fn swap_actors(&mut self) {
+        core::mem::swap(&mut self.current_actor, &mut self.backup_actor);
+    }
+
+    pub fn update_current_uniforms(&self, uniforms: &PointCloudUniforms) {
+        self.current_actor.update_uniforms(&self.queue, uniforms);
+    }
+
+    pub fn update_backup_uniforms(&self, uniforms: &PointCloudUniforms) {
+        self.backup_actor.update_uniforms(&self.queue, uniforms);
     }
 
     pub fn update_laser_uniforms(&self, uniforms: &LaserUniforms) {
@@ -445,15 +521,30 @@ impl Graphics {
                 multiview_mask: None,
             });
 
-            // Draw point cloud
-            if let Some(ref pos_buffer) = self.point_cloud_position_buffer {
-                if let Some(ref data_buffer) = self.point_cloud_data_buffer {
-                    r_pass.set_pipeline(&self.point_cloud_pipeline);
-                    r_pass.set_bind_group(0, &self.point_bind_group, &[]);
-                    r_pass.set_vertex_buffer(0, pos_buffer.slice(..));
-                    r_pass.set_vertex_buffer(1, data_buffer.slice(..));
-                    r_pass.draw(0..self.point_count, 0..1);
-                }
+            if self.backup_actor.has_data()
+                && let (Some(pos_buf), Some(data_buf)) = (
+                    &self.backup_actor.position_buffer,
+                    &self.backup_actor.data_buffer,
+                )
+            {
+                r_pass.set_pipeline(&self.point_cloud_pipeline);
+                r_pass.set_bind_group(0, &self.backup_actor.bind_group, &[]);
+                r_pass.set_vertex_buffer(0, pos_buf.slice(..));
+                r_pass.set_vertex_buffer(1, data_buf.slice(..));
+                r_pass.draw(0..self.backup_actor.point_count, 0..1);
+            }
+
+            if self.current_actor.has_data()
+                && let (Some(pos_buf), Some(data_buf)) = (
+                    &self.current_actor.position_buffer,
+                    &self.current_actor.data_buffer,
+                )
+            {
+                r_pass.set_pipeline(&self.point_cloud_pipeline);
+                r_pass.set_bind_group(0, &self.current_actor.bind_group, &[]);
+                r_pass.set_vertex_buffer(0, pos_buf.slice(..));
+                r_pass.set_vertex_buffer(1, data_buf.slice(..));
+                r_pass.draw(0..self.current_actor.point_count, 0..1);
             }
 
             // Draw laser rays

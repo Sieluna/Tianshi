@@ -43,7 +43,7 @@ impl LaserRay {
     }
 
     /// Update ray state, returns true if still active.
-    pub fn update(&mut self, delta_ms: f32) -> bool {
+    pub fn tick(&mut self, delta_ms: f32) -> bool {
         self.age_ms += delta_ms;
 
         // Check if delay has passed
@@ -63,14 +63,14 @@ impl LaserRay {
 }
 
 #[derive(Debug, Clone)]
-pub struct LaserRayPool {
+pub struct LaserModule {
     pub rays: Vec<LaserRay>,
     pub instances: Vec<LaserInstance>,
     pub max_rays: usize,
     pub ray_per_batch: usize,
 }
 
-impl LaserRayPool {
+impl LaserModule {
     pub fn new(max_rays: usize, ray_per_batch: usize) -> Self {
         Self {
             rays: Vec::with_capacity(max_rays),
@@ -82,11 +82,11 @@ impl LaserRayPool {
 
     /// Spawn a batch of rays targeting point cloud.
     pub fn spawn_batch<R: Rng>(&mut self, rng: &mut R, model: &Model, scan_line_y: f32, n: f32) {
-        let count_to_spawn = self.ray_per_batch.min(self.max_rays - self.rays.len());
+        let budget = self.ray_per_batch.min(self.max_rays - self.rays.len());
         let mut spawned = 0;
 
         for _ in 0..500 {
-            if spawned >= count_to_spawn {
+            if spawned >= budget {
                 break;
             }
 
@@ -99,27 +99,16 @@ impl LaserRayPool {
             let random_point_idx = rng.random_range(0..point_count);
             let target_pos = model.data.point(random_point_idx).unwrap_or(Vec3::ZERO);
 
-            match model.laser_mode {
-                LaserMode::Ceiling => {
-                    // For ceiling mode (during scanline animation), only spawn near the scanline
-                    if (target_pos.y - scan_line_y).abs() > 40.0 {
-                        continue;
-                    }
-                }
-                LaserMode::Random => {
-                    // For random mode, skip points above the scanline
-                    if target_pos.y > scan_line_y {
-                        continue;
-                    }
-                }
+            let accept = match model.laser_mode {
+                LaserMode::Ceiling => (target_pos.y - scan_line_y).abs() <= 40.0,
+                LaserMode::Random => target_pos.y <= scan_line_y,
+            };
+            if !accept {
+                continue;
             }
 
-            // Source position depends on laser mode
             let src_pos = match model.laser_mode {
-                LaserMode::Ceiling => {
-                    // Source from ceiling at fixed Y=2000, with X,Z matching target
-                    Vec3::new(target_pos.x, 2000.0, target_pos.z)
-                }
+                LaserMode::Ceiling => Vec3::new(target_pos.x, 2000.0, target_pos.z),
                 LaserMode::Random => {
                     // Source from random discrete X position, fixed Y=2000, Z=0
                     let x_options = [-3000.0_f32, 400.0_f32, 3000.0_f32];
@@ -153,8 +142,8 @@ impl LaserRayPool {
     }
 
     /// Update all rays and refresh cached instances.
-    pub fn update(&mut self, delta_ms: f32) {
-        self.rays.retain_mut(|ray| ray.update(delta_ms));
+    pub fn tick(&mut self, delta_ms: f32) {
+        self.rays.retain_mut(|ray| ray.tick(delta_ms));
 
         self.instances.clear();
         self.instances.reserve(self.rays.len());
@@ -175,9 +164,5 @@ impl LaserRayPool {
     pub fn clear(&mut self) {
         self.rays.clear();
         self.instances.clear();
-    }
-
-    pub fn is_full(&self) -> bool {
-        self.rays.len() >= self.max_rays
     }
 }

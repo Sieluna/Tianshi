@@ -4,8 +4,6 @@ use glam::Vec3;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use super::error::{Error, Result};
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LaserMode {
@@ -20,6 +18,17 @@ pub struct BoundingBox {
     pub max: Vec3,
 }
 
+impl BoundingBox {
+    fn dimensions(&self) -> Vec3 {
+        self.max - self.min
+    }
+
+    fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+}
+
+/// A normalised point cloud with per-point rendering attributes.
 #[derive(Debug, Clone)]
 pub struct PointCloud {
     pub points: Vec<f32>,
@@ -31,91 +40,60 @@ pub struct PointCloud {
 
 impl PointCloud {
     /// Deserialize point cloud from raw binary buffer.
-    pub fn from_bytes(buffer: &[u8]) -> Result<Self> {
-        if buffer.len() % 4 != 0 {
-            return Err(Error::InvalidPointCloudLength);
-        }
+    pub fn from_bytes(buffer: &[u8]) -> Self {
+        assert!(
+            buffer.len().is_multiple_of(4),
+            "Buffer length must be a multiple of 4"
+        );
 
-        // Parse raw binary to f32 array
-        let mut raw_points = Vec::new();
-        for chunk in buffer.chunks_exact(4) {
-            let bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
-            let value = f32::from_le_bytes(bytes);
-            raw_points.push(value);
-        }
+        let mut points = Vec::with_capacity(buffer.len() / 4);
 
-        // Compute AABB
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
 
-        for i in (0..raw_points.len()).step_by(3) {
-            if i + 2 < raw_points.len() {
-                let p = Vec3::new(raw_points[i], raw_points[i + 1], raw_points[i + 2]);
-                min = min.min(p);
-                max = max.max(p);
-            }
+        for chunk in buffer.chunks_exact(12) {
+            let x = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let y = f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+            let z = f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+            let p = Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+            points.extend_from_slice(&[x, y, z]);
         }
 
         let bbox = BoundingBox { min, max };
-        let dim = bbox.max - bbox.min;
-
-        // Scale factor based on Y-axis only
+        let dim = bbox.dimensions();
         let scale_factor = 1900.0 / dim.y;
+        let offset = -(bbox.min + dim * 0.5);
 
-        let offset = Vec3::new(
-            -0.5 * dim.x - bbox.min.x,
-            -0.5 * dim.y - bbox.min.y,
-            -0.5 * dim.z - bbox.min.z,
-        );
-
-        // Transform all points
-        let mut points = Vec::new();
-        for i in (0..raw_points.len()).step_by(3) {
-            if i + 2 < raw_points.len() {
-                let p = Vec3::new(raw_points[i], raw_points[i + 1], raw_points[i + 2]);
-                let tp: Vec3 = (p + offset) * scale_factor;
-                points.extend_from_slice(&[tp.x, tp.y, tp.z]);
-            }
+        for chunk in points.chunks_exact_mut(3) {
+            let p = Vec3::new(chunk[0], chunk[1], chunk[2]);
+            let tp = (p + offset) * scale_factor;
+            chunk.copy_from_slice(&tp.to_array());
         }
 
-        // Generate point attributes
-        let point_count = points.len() / 3;
-        let mut rng = rand::rng();
-        let mut attributes = Vec::new();
-        for _ in 0..point_count {
-            let active = 1.0_f32;
-            let size = rng.random_range(4.0..8.0);
-            let layer = rng.random_range(1.0..3.0);
-            let delay = rng.random_range(-100.0..100.0);
-            attributes.extend_from_slice(&[active, size, layer, delay]);
-        }
+        let attributes = Self::generate_attributes(points.len() / 3);
 
-        Ok(Self {
+        Self {
             points,
             attributes,
             scale: scale_factor,
-            center: (bbox.min + bbox.max) * 0.5,
+            center: bbox.center(),
             bbox,
-        })
+        }
     }
 
     /// Serialize point cloud back to binary format.
     pub fn to_bytes(&self) -> Vec<u8> {
         let dim = self.bbox.max - self.bbox.min;
-        let offset = Vec3::new(
-            -0.5 * dim.x - self.bbox.min.x,
-            -0.5 * dim.y - self.bbox.min.y,
-            -0.5 * dim.z - self.bbox.min.z,
-        );
+        let offset = -(self.bbox.min + dim * 0.5);
 
-        let mut buffer = Vec::new();
-        for i in (0..self.points.len()).step_by(3) {
-            if i + 2 < self.points.len() {
-                let p = Vec3::new(self.points[i], self.points[i + 1], self.points[i + 2]);
-                let op = p / self.scale - offset;
-                for &v in &[op.x, op.y, op.z] {
-                    buffer.extend_from_slice(&v.to_le_bytes());
-                }
+        let mut buffer = Vec::with_capacity(self.points.len() / 3 * 12);
+        for chunk in self.points.chunks_exact(3) {
+            let p = Vec3::new(chunk[0], chunk[1], chunk[2]);
+            let original = p / self.scale - offset;
+            for v in original.to_array() {
+                buffer.extend_from_slice(&v.to_le_bytes());
             }
         }
         buffer
@@ -129,15 +107,23 @@ impl PointCloud {
     /// Get the 3D position of a normalized point by index.
     pub fn point(&self, index: usize) -> Option<Vec3> {
         let i = index * 3;
-        if i + 2 < self.points.len() {
-            Some(Vec3::new(
-                self.points[i],
-                self.points[i + 1],
-                self.points[i + 2],
-            ))
-        } else {
-            None
-        }
+        self.points
+            .get(i..i + 3)
+            .map(|s| Vec3::new(s[0], s[1], s[2]))
+    }
+
+    fn generate_attributes(count: usize) -> Vec<f32> {
+        let mut rng = rand::rng();
+        (0..count)
+            .flat_map(|_| {
+                [
+                    1.0_f32,                          // active
+                    rng.random_range(4.0..8.0),       // size
+                    rng.random_range(0..4u32) as f32, // layer
+                    rng.random_range(-100.0..100.0),  // delay
+                ]
+            })
+            .collect()
     }
 }
 
@@ -166,24 +152,6 @@ pub struct Model {
     pub laser_mode: LaserMode,
 }
 
-impl Model {
-    /// Get the effective world space offset (offset + pivot).
-    pub fn world_offset(&self) -> Vec3 {
-        self.offset + self.pivot
-    }
-
-    /// Get the effective scale in world space.
-    pub fn world_scale(&self) -> f32 {
-        self.data.scale * self.scale
-    }
-
-    /// Transform a normalized point to world space.
-    pub fn world_position(&self, normalized_point: Vec3) -> Vec3 {
-        let scale = self.world_scale();
-        normalized_point * scale + self.offset + self.pivot * (1.0 - scale)
-    }
-}
-
 impl Default for Model {
     fn default() -> Self {
         Self {
@@ -206,21 +174,21 @@ pub fn load_models() -> Vec<Model> {
     let factory_json = include_str!("../assets/factory.json");
     let mut factory_model: Model = serde_json::from_str(factory_json).unwrap();
     let factory_bin = include_bytes!("../assets/factory.bd9a36.bin");
-    factory_model.data = PointCloud::from_bytes(factory_bin).unwrap();
+    factory_model.data = PointCloud::from_bytes(factory_bin);
     models.push(factory_model);
 
     // Load pile model
     let pile_json = include_str!("../assets/pile.json");
     let mut pile_model: Model = serde_json::from_str(pile_json).unwrap();
     let pile_bin = include_bytes!("../assets/pile.251dc1.bin");
-    pile_model.data = PointCloud::from_bytes(pile_bin).unwrap();
+    pile_model.data = PointCloud::from_bytes(pile_bin);
     models.push(pile_model);
 
     // Load trinity model
     let trinity_json = include_str!("../assets/trinity.json");
     let mut trinity_model: Model = serde_json::from_str(trinity_json).unwrap();
     let trinity_bin = include_bytes!("../assets/trinity.d6c060.bin");
-    trinity_model.data = PointCloud::from_bytes(trinity_bin).unwrap();
+    trinity_model.data = PointCloud::from_bytes(trinity_bin);
     models.push(trinity_model);
 
     models
@@ -241,7 +209,7 @@ mod tests {
             buffer.extend_from_slice(&v.to_le_bytes());
         }
 
-        let cloud = PointCloud::from_bytes(&buffer).unwrap();
+        let cloud = PointCloud::from_bytes(&buffer);
         assert_eq!(cloud.point_count(), 2);
         assert_eq!(cloud.point(0).is_some(), true);
         assert_eq!(cloud.point(1).is_some(), true);
@@ -255,12 +223,12 @@ mod tests {
             buffer.extend_from_slice(&v.to_le_bytes());
         }
 
-        let cloud = PointCloud::from_bytes(&buffer).unwrap();
+        let cloud = PointCloud::from_bytes(&buffer);
         assert_eq!(cloud.point_count(), 2);
 
         // Roundtrip: normalized -> binary -> normalized
         let serialized = cloud.to_bytes();
-        let restored = PointCloud::from_bytes(&serialized).unwrap();
+        let restored = PointCloud::from_bytes(&serialized);
 
         // Points should be approximately equal after roundtrip
         assert_eq!(restored.point_count(), cloud.point_count());

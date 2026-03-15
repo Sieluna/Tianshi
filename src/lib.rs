@@ -1,10 +1,7 @@
 extern crate alloc;
 
-mod actor;
-mod animation;
 mod app;
 mod controller;
-mod error;
 mod glitch;
 mod laser;
 mod model;

@@ -14,7 +14,7 @@ pub struct GlitchEffect {
     pub lines: Vec<GlitchLine>, // 6-8 lines
     pub pulse_count: usize,     // 3-6 pulses
     pub pulse_index: usize,
-    pub time_since_last_pulse: f32,
+    pub pulse_elapsed: f32, // time since last pulse (ms)
     pub is_active: bool,
 }
 
@@ -38,12 +38,12 @@ impl GlitchEffect {
         // Set random pulse count (3-6)
         self.pulse_count = rng.random_range(3..=6);
         self.pulse_index = 0;
-        self.time_since_last_pulse = 0.0;
+        self.pulse_elapsed = 0.0;
         self.is_active = true;
     }
 
     /// Update glitch animation.
-    pub fn update(&mut self, delta_ms: f32) -> [Vec4; 4] {
+    pub fn tick(&mut self, delta_ms: f32) -> [Vec4; 4] {
         const PULSE_INTERVAL_MS: f32 = 80.0;
 
         let mut effects = [Vec4::ZERO; 4];
@@ -52,11 +52,11 @@ impl GlitchEffect {
             return effects;
         }
 
-        self.time_since_last_pulse += delta_ms;
+        self.pulse_elapsed += delta_ms;
 
         // Check if we need to pulse
-        if self.time_since_last_pulse >= PULSE_INTERVAL_MS && self.pulse_index < self.pulse_count {
-            self.time_since_last_pulse = 0.0;
+        if self.pulse_elapsed >= PULSE_INTERVAL_MS && self.pulse_index < self.pulse_count {
+            self.pulse_elapsed = 0.0;
             self.pulse_index += 1;
         }
 
@@ -79,6 +79,42 @@ impl GlitchEffect {
                 effects[vec_idx].z = line.y;
                 effects[vec_idx].w = line.x_offset;
             }
+        }
+
+        effects
+    }
+}
+
+pub struct GlitchModule {
+    pub effect: GlitchEffect,
+    pub timer: f32,
+    pub interval: f32,
+}
+
+impl GlitchModule {
+    pub fn new() -> Self {
+        let mut module = Self {
+            effect: GlitchEffect::default(),
+            timer: 0.0,
+            interval: 5000.0,
+        };
+
+        let mut rng = rand::rng();
+        module.effect.activate(&mut rng);
+        module.interval = 4000.0 + rng.random_range(0.0..2000.0);
+
+        module
+    }
+
+    pub fn tick(&mut self, delta_ms: f32) -> [Vec4; 4] {
+        let effects = self.effect.tick(delta_ms);
+
+        self.timer += delta_ms;
+        if self.timer >= self.interval {
+            self.timer = 0.0;
+            let mut rng = rand::rng();
+            self.effect.activate(&mut rng);
+            self.interval = 4000.0 + rng.random_range(0.0..2000.0);
         }
 
         effects

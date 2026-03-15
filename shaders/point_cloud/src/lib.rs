@@ -1,6 +1,6 @@
 #![no_std]
 
-use shared::{PointCloudUniforms, lerp, lerp_3d, smoothstep};
+use shared::{FadeState, PointCloudUniforms, lerp, lerp_3d, smoothstep};
 use spirv_std::glam::{Vec2, Vec3, Vec4};
 #[allow(unused_imports)]
 use spirv_std::num_traits::Float;
@@ -39,33 +39,43 @@ pub fn point_cloud_vs(
     let y_pos = pos.y;
     let scan_line_dist = (adjusted_scan_line_y - y_pos).abs();
 
-    let mut alpha = point_active;
     let mut color = Vec3::new(0.8, 0.8, 0.8);
     if scan_line_dist > 0.0 && scan_line_dist < uniforms.scan_line_width {
         color = Vec3::new(1.0, 1.0, 0.2);
     }
 
-    // Cosine fade
+    // Cosine fade based on fade state
     const PI: f32 = core::f32::consts::PI;
     let range = 100.0_f32;
-    if uniforms.is_active == 1u32 {
-        if y_pos > adjusted_scan_line_y {
-            alpha = if scan_line_dist >= range {
-                0.0
+
+    let fade_state: FadeState = uniforms.fade_state.into();
+    let alpha = match fade_state {
+        FadeState::FadingIn => {
+            if y_pos > adjusted_scan_line_y {
+                pos.y -= 0.05 * scan_line_dist * scan_line_dist;
+                if scan_line_dist >= range {
+                    0.0
+                } else {
+                    (scan_line_dist * PI / (range * 2.0)).cos().clamp(0.0, 1.0)
+                }
             } else {
-                (scan_line_dist * PI / (range * 2.0)).cos().clamp(0.0, 1.0)
-            };
+                point_active
+            }
         }
-    } else {
-        if y_pos < adjusted_scan_line_y {
-            pos.y -= 0.05 * scan_line_dist * scan_line_dist;
-            alpha = if scan_line_dist >= range {
-                0.0
+        FadeState::FadingOut => {
+            if y_pos < adjusted_scan_line_y {
+                pos.y -= 0.05 * scan_line_dist * scan_line_dist;
+                if scan_line_dist >= range {
+                    0.0
+                } else {
+                    (scan_line_dist * PI / (range * 2.0)).cos().clamp(0.0, 1.0)
+                }
             } else {
-                (scan_line_dist * PI / (range * 2.0)).cos().clamp(0.0, 1.0)
-            };
+                point_active
+            }
         }
-    }
+        FadeState::None => point_active,
+    };
 
     // Camera distance fade
     let mv_pos = uniforms.model_view * Vec4::new(pos.x, pos.y, pos.z, 1.0);
