@@ -2,7 +2,9 @@
 
 A particle effects demo inspired by the Endfield homepage.
 
-![Demo](assets/demo.png)
+[![Demo](assets/demo.png)](https://sieluna.github.io/Tianshi)
+
+*Click the image to view [live demo](https://sieluna.github.io/Tianshi).*
 
 ## Quick Start
 
