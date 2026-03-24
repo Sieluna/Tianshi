@@ -23,9 +23,8 @@ repository.workspace = true
 
 [dependencies]
 bytemuck = { workspace = true, features = ["derive"] }
-futures = { version = "0.3", default-features = false, features = ["executor"] }
 glam = { workspace = true, features = ["bytemuck", "serde", "std"] }
-image = { version = "0.25", default-features = false, features = ["hdr", "png"] }
+hashbrown = { version = "0.16", default-features = false, features = ["allocator-api2", "default-hasher", "inline-more"] }
 log = { version = "0.4", default-features = false }
 rand = { version = "0.9", default-features = false, features = ["os_rng", "std", "thread_rng"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "std"] }

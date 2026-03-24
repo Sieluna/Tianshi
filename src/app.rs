@@ -1,15 +1,19 @@
 use core::f32::consts::PI;
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
+use hashbrown::HashSet;
 use shared::{LaserUniforms, PointCloudUniforms};
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
@@ -21,8 +25,8 @@ use super::render::{Graphics, Rc, RenderLevel, create_graphics};
 
 enum State {
     Ready {
-        controller: Controller,
-        graphics: Graphics,
+        controller: Box<Controller>,
+        graphics: Box<Graphics>,
     },
     Init(Option<EventLoopProxy<Graphics>>),
 }
@@ -44,7 +48,7 @@ impl Camera {
         }
     }
 
-    pub fn update(&mut self, delta_ms: f32, keys: &std::collections::HashSet<KeyCode>) {
+    pub fn update(&mut self, delta_ms: f32, keys: &HashSet<KeyCode>) {
         let forward = Vec3::new(-self.yaw.sin(), 0.0, -self.yaw.cos());
         let right = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
 
@@ -99,9 +103,8 @@ pub struct App {
     camera: Camera,
     is_right_dragging: bool, // Right mouse for camera look
     is_left_down: bool,      // Left mouse down for model rotation
-    last_mouse_x: f32,
-    last_mouse_y: f32,
-    keys_pressed: std::collections::HashSet<KeyCode>,
+    last_mouse: Vec2,
+    keys_pressed: HashSet<KeyCode>,
 }
 
 impl App {
@@ -112,9 +115,8 @@ impl App {
             camera: Camera::new(),
             is_right_dragging: false,
             is_left_down: false,
-            last_mouse_x: 0.0,
-            last_mouse_y: 0.0,
-            keys_pressed: std::collections::HashSet::new(),
+            last_mouse: Vec2::ZERO,
+            keys_pressed: HashSet::new(),
         }
     }
 
@@ -316,8 +318,8 @@ impl ApplicationHandler<Graphics> for App {
         graphics.request_redraw();
 
         self.state = State::Ready {
-            graphics,
-            controller,
+            graphics: Box::new(graphics),
+            controller: Box::new(controller),
         };
     }
 
@@ -343,7 +345,7 @@ impl ApplicationHandler<Graphics> for App {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(keycode) = event.physical_key {
                     match event.state {
-                        winit::event::ElementState::Pressed => {
+                        ElementState::Pressed => {
                             // Q key: switch model
                             if keycode == KeyCode::KeyQ
                                 && let State::Ready {
@@ -368,7 +370,7 @@ impl ApplicationHandler<Graphics> for App {
 
                             self.keys_pressed.insert(keycode);
                         }
-                        winit::event::ElementState::Released => {
+                        ElementState::Released => {
                             self.keys_pressed.remove(&keycode);
                         }
                     }
@@ -376,16 +378,16 @@ impl ApplicationHandler<Graphics> for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 match button {
-                    winit::event::MouseButton::Right => {
+                    MouseButton::Right => {
                         // Right mouse: toggle camera look mode
                         match state {
-                            winit::event::ElementState::Pressed => {
+                            ElementState::Pressed => {
                                 self.is_right_dragging = true;
                                 if let State::Ready { controller, .. } = &mut self.state {
                                     controller.auto_rotation = false;
                                 }
                             }
-                            winit::event::ElementState::Released => {
+                            ElementState::Released => {
                                 self.is_right_dragging = false;
                                 if let State::Ready { controller, .. } = &mut self.state {
                                     controller.auto_rotation = true;
@@ -393,16 +395,16 @@ impl ApplicationHandler<Graphics> for App {
                             }
                         }
                     }
-                    winit::event::MouseButton::Left => {
+                    MouseButton::Left => {
                         // Left mouse: manual model rotation (only while held)
                         match state {
-                            winit::event::ElementState::Pressed => {
+                            ElementState::Pressed => {
                                 self.is_left_down = true;
                                 if let State::Ready { controller, .. } = &mut self.state {
                                     controller.auto_rotation = false;
                                 }
                             }
-                            winit::event::ElementState::Released => {
+                            ElementState::Released => {
                                 self.is_left_down = false;
                                 if let State::Ready { controller, .. } = &mut self.state {
                                     controller.auto_rotation = true;
@@ -419,21 +421,20 @@ impl ApplicationHandler<Graphics> for App {
 
                 if self.is_right_dragging {
                     // Right mouse dragging: rotate camera view
-                    let delta_x = x - self.last_mouse_x;
-                    let delta_y = y - self.last_mouse_y;
+                    let delta_x = x - self.last_mouse.x;
+                    let delta_y = y - self.last_mouse.y;
                     self.camera.rotate(delta_x, delta_y, 0.003);
                 }
 
                 if self.is_left_down {
                     // Left mouse held: rotate model
-                    let delta_x = x - self.last_mouse_x;
+                    let delta_x = x - self.last_mouse.x;
                     if let State::Ready { controller, .. } = &mut self.state {
                         controller.target_rotation_y += delta_x * 0.01;
                     }
                 }
 
-                self.last_mouse_x = x;
-                self.last_mouse_y = y;
+                self.last_mouse = Vec2::new(x, y);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 // Mouse wheel: switch model

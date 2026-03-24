@@ -94,7 +94,7 @@ pub struct GlitchModule {
 impl GlitchModule {
     pub fn new() -> Self {
         let mut module = Self {
-            effect: GlitchEffect::default(),
+            effect: GlitchEffect::new(),
             timer: 0.0,
             interval: 5000.0,
         };
